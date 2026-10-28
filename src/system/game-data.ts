@@ -1624,6 +1624,9 @@ export class GameData {
    * @param incrementCount
    * @param fromEgg
    * @param showMessage
+   * @param speciesFormIndex - The form index of `species` to unlock; defaults to the Pokemon's own form index.
+   * Differs from the Pokemon's form index when unlocking prevolutions whose forms do not line up with the evolution's
+   * (e.g. Midnight Lycanroc must unlock Normal Rockruff, not Own Tempo Rockruff).
    * @returns `true` if Pokemon catch unlocked a new starter, `false` if Pokemon catch did not unlock a starter
    */
   // TODO: This logic should emphatically go somewhere else
@@ -1633,13 +1636,17 @@ export class GameData {
     incrementCount = true,
     fromEgg = false,
     showMessage = true,
+    speciesFormIndex = pokemon.formIndex,
   ): Promise<boolean> {
     const dexEntry = this.dexData[species.speciesId];
     const caughtAttr = dexEntry.caughtAttr;
     const formIndex = pokemon.formIndex;
 
+    // Replace the Pokemon's own form bits with those of the form being unlocked for this species.
     // This makes sure that we do not try to unlock data which cannot be unlocked
-    const dexAttr = pokemon.getDexAttr() & species.getFullUnlocksData();
+    const dexAttr =
+      ((pokemon.getDexAttr() & (DexAttr.DEFAULT_FORM - 1n)) | this.getFormAttr(speciesFormIndex))
+      & species.getFullUnlocksData();
 
     // Mark as caught
     dexEntry.caughtAttr |= dexAttr;
@@ -1732,12 +1739,14 @@ export class GameData {
       if (prevolution == null) {
         return newStarter;
       }
+      const prevolutionSpecies = speciesDataRegistry.getSpecies(prevolution);
       return await this.setPokemonSpeciesCaught(
         pokemon,
-        speciesDataRegistry.getSpecies(prevolution),
+        prevolutionSpecies,
         incrementCount,
         fromEgg,
         showMessage,
+        this.getPrevolutionFormIndex(species, speciesFormIndex, prevolutionSpecies),
       );
     };
 
@@ -2048,6 +2057,29 @@ export class GameData {
     }
 
     return cost.value;
+  }
+
+  /**
+   * Determine which form of a prevolution corresponds to a given form of its evolution,
+   * based on the prevolution's evolution data.
+   * @param species - The evolved {@linkcode PokemonSpecies}
+   * @param formIndex - The form index of the evolved species
+   * @param prevolution - The prevolution {@linkcode PokemonSpecies}
+   * @returns The prevolution's matching form index, or `formIndex` if no explicit mapping exists
+   */
+  private getPrevolutionFormIndex(species: PokemonSpecies, formIndex: number, prevolution: PokemonSpecies): number {
+    const formKey = species.forms[formIndex]?.formKey;
+    if (formKey == null || prevolution.forms.length === 0) {
+      return formIndex;
+    }
+    const evolution = speciesDataRegistry
+      .getEvolutions(prevolution.speciesId)
+      .find(e => e.speciesId === species.speciesId && e.evoFormKey === formKey && e.preFormKey != null);
+    if (evolution == null) {
+      return formIndex;
+    }
+    const preFormIndex = prevolution.forms.findIndex(f => f.formKey === evolution.preFormKey);
+    return preFormIndex === -1 ? formIndex : preFormIndex;
   }
 
   getFormIndex(attr: bigint): number {
